@@ -33,7 +33,7 @@ emulation (the app passes `--platform linux/amd64` for you).
 
 ```sh
 ./install.sh     # one-time: Homebrew, Docker Desktop, VLC (skips what you already have)
-./web.sh         # starts the app and opens http://localhost:8888
+./web.sh         # starts the app and opens it in your browser (http://localhost:8888)
 ```
 
 Start Docker Desktop first. The very first *Play* downloads the engine image, which can take a few minutes.
@@ -75,7 +75,7 @@ Environment variables, all optional:
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `ACE_PORT` | `8888` | port of the web UI |
+| `ACE_PORT` | `8888` | preferred port of the web UI; if it is taken, a random free port is used and printed |
 | `ACE_ENGINE_PORT` | `6878` | AceStream engine port |
 | `ACE_IFACE` | auto | network interface to chart, e.g. `en0` |
 | `ACE_DATA_DIR` | `~/Library/Application Support/AcePlayer` | where the library is stored |

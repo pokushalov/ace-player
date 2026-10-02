@@ -1,16 +1,25 @@
 "use strict";
+/*
+ * Ace Player UI - plain JavaScript, no build step, no dependencies.
+ *
+ * Data flow: poll() fetches /api/state every second and hands the pieces to applyEngine(),
+ * applyNow() and the chart code; user actions (play/stop/engine/library) POST to the server and
+ * the next poll reflects the result. Everything that comes from the server or the user is
+ * inserted with textContent / createTextNode - never innerHTML - because stream names and
+ * engine messages are untrusted text.
+ */
 const NS = "http://www.w3.org/2000/svg";
 const $ = id => document.getElementById(id);
-const SERIES = [["down", "var(--down)"], ["up", "var(--up)"]];
-const WINDOW = 300; // seconds of history
+const SERIES = [["down", "var(--down)"], ["up", "var(--up)"]];  // colours come from CSS tokens (light/dark aware)
+const WINDOW = 300; // seconds of network history shown (must match the server's HISTORY_SECONDS)
 
-let data = [];
-let lastT = 0;
-let hoverIdx = null;
-let busy = false;
-let engineBusy = false;
-let lastNowKey = "";
-let lastNow = { url: "" };
+let data = [];          // network samples [{t, down, up}], oldest first, capped at WINDOW
+let lastT = 0;          // timestamp of the newest sample we have; sent as ?since= so polls stay small
+let hoverIdx = null;    // index into `data` under the pointer / keyboard cursor, or null
+let busy = false;       // a Play request is in flight (it can take minutes on first run)
+let engineBusy = false; // an engine start/stop request is in flight
+let lastNowKey = "";    // phase|vlc|error of the previous poll, used to log only real transitions
+let lastNow = { url: "" };  // latest "now playing" from the server (for the Copy button)
 
 // -- helpers ---------------------------------------------------------------------
 
@@ -43,6 +52,8 @@ function log(msg, type) {
   box.scrollTop = box.scrollHeight;
 }
 
+/** POST JSON to the server. Never throws: failures come back as {ok:false, error} so callers
+ *  can show the message without a try/catch each time. */
 async function api(path, body) {
   try {
     const r = await fetch(path, {
@@ -66,6 +77,7 @@ function setBusy(on) {
   $("play").textContent = on ? "Starting…" : "▶ Play";
 }
 
+/** Play whatever is in the input box. The server validates it; we only check it is not empty. */
 async function play() {
   const source = $("src").value.trim();
   if (!source) return setStatus("Paste an acestream:// link, a content ID or a stream URL first.", "err");
@@ -131,6 +143,7 @@ $("copy").onclick = async () => {
 
 let histRev = -1;
 
+/** "5 min ago" style relative time for the library. */
 function ago(t) {
   const s = Math.max(0, Date.now() / 1000 - t);
   if (s < 60) return "just now";
@@ -140,6 +153,7 @@ function ago(t) {
   return new Date(t * 1000).toLocaleDateString();
 }
 
+// 40-char content IDs are unreadable in full; keep the start and end so they stay distinguishable.
 const shorten = s => (s.length > 46 ? s.slice(0, 24) + "…" + s.slice(-10) : s);
 
 async function loadHistory() {
@@ -165,13 +179,14 @@ function iconButton(text, label, onclick, cls) {
   return b;
 }
 
+/** Swap a library title for an inline text field. Enter or clicking away saves, Escape cancels. */
 function startRename(e, titleEl) {
   const input = document.createElement("input");
   input.className = "title";
   input.value = e.name;
   input.placeholder = "Name this stream";
   input.maxLength = 80;
-  let done = false;
+  let done = false;  // finish() can fire twice (Enter, then blur from re-render); only act once
   const finish = save => {
     if (done) return;
     done = true;
@@ -188,6 +203,7 @@ function startRename(e, titleEl) {
   input.select();
 }
 
+/** One library entry: pin, title (click = put into the input), play, rename, remove. */
 function libRow(e) {
   const li = document.createElement("li");
   li.className = "item";
@@ -214,6 +230,7 @@ function libRow(e) {
   return li;
 }
 
+/** Rebuild the library list. The server already sorts it (pinned first, then most recent). */
 function renderLibrary(items) {
   const ul = $("lib");
   ul.replaceChildren();
@@ -237,6 +254,7 @@ $("clear-recent").onclick = () => histApi("clear", "");
 
 // -- state -----------------------------------------------------------------------
 
+/** Header badge: engine running/stopped, the Start/Stop button, and the image attribution line. */
 function applyEngine(e) {
   const dot = $("dot"), btn = $("engine-btn");
   if (e.running === null) {
@@ -259,6 +277,8 @@ function applyEngine(e) {
   btn.disabled = engineBusy;
 }
 
+/** The "Now playing" row, the Stop button, and one-off status/log messages on phase changes.
+ *  Phases (from the server): idle -> connecting (waiting for peers) -> playing (VLC launched) | error. */
 function applyNow(n, stream) {
   lastNow = n;
   const active = n.phase === "connecting" || n.phase === "playing";
@@ -273,6 +293,7 @@ function applyNow(n, stream) {
   const peers = stream && stream.peers != null ? " · " + stream.peers + " peers" : "";
   $("now-label").textContent = label + (active ? peers : "");
 
+  // Only react when something actually changed; otherwise the 1 s poll would spam the log.
   const key = n.phase + "|" + n.vlc + "|" + n.error;
   if (key !== lastNowKey) {
     if (n.phase === "playing" && lastNowKey.startsWith("connecting")) {
@@ -288,12 +309,14 @@ function applyNow(n, stream) {
   }
 }
 
+/** One state refresh. Samples arrive incrementally (?since=), then are appended and trimmed to WINDOW. */
 async function poll() {
   try {
     const r = await fetch("/api/state?since=" + lastT, { cache: "no-store" });
     const s = await r.json();
     applyEngine(s.engine);
     applyNow(s.now, s.stream);
+    // The library is refetched only when the server says it changed (history_rev bumps on every edit).
     if (s.history_rev !== histRev) {
       histRev = s.history_rev;
       loadHistory();
@@ -314,6 +337,7 @@ async function poll() {
 
 // -- charts ----------------------------------------------------------------------
 
+/** A "round" gridline step (1, 2, 5, 10 x 10^n) so that 4 steps cover `max`: the axis reads 0/10/20, not 0/7.3/14.6. */
 function niceStep(max) {
   const raw = max / 4, p = Math.pow(10, Math.floor(Math.log10(raw)));
   for (const m of [1, 2, 5, 10]) if (raw <= m * p) return m * p;
@@ -331,6 +355,7 @@ function updateTiles() {
   }
 }
 
+/** Tiny axis-less line of the last 60 s for a stat tile; scaled to its own max so the trend is visible. */
 function spark(id, key, color) {
   const sv = $(id);
   sv.replaceChildren();
@@ -346,6 +371,12 @@ function spark(id, key, color) {
   el("circle", { cx: l[0], cy: l[1], r: 4, fill: color, stroke: "var(--surface)", "stroke-width": 2 }, sv);
 }
 
+/**
+ * The main chart: download above a zero line, upload mirrored below it, on ONE shared scale.
+ * (Two separate axes would make the sizes incomparable, so there is a single symmetric scale.)
+ * Adds per-series average lines, a labelled peak, and a hover crosshair. It is redrawn from
+ * scratch on every poll - cheap at 300 points and avoids any stale-state bugs.
+ */
 function draw() {
   spark("sd", "down", "var(--down)");
   spark("su", "up", "var(--up)");
@@ -357,6 +388,7 @@ function draw() {
   const mid = m.t + ih / 2, half = ih / 2;
   const tmax = data[data.length - 1].t, tmin = tmax - WINDOW;
   const peak = Math.max(1, ...data.map(d => Math.max(d.down, d.up)));
+  // Each half shows two steps, so the scale needs to fit `peak` into 2 steps: niceStep(peak * 2).
   const step = niceStep(peak * 2), M = step * 2;
   const X = t => m.l + (t - tmin) / WINDOW * iw;
   const Y = { down: v => mid - v / M * half, up: v => mid + v / M * half };
@@ -434,6 +466,7 @@ function showTip(d, x) {
   tip.style.top = "8px";
 }
 
+// Hover: snap to the sample nearest the pointer's x position (readers aim at a time, not at a 2px line).
 $("svg").addEventListener("pointermove", e => {
   const g = $("svg")._geom;
   if (!g || !data.length) return;
@@ -446,6 +479,7 @@ $("svg").addEventListener("pointermove", e => {
 });
 $("svg").addEventListener("pointerleave", () => { hoverIdx = null; draw(); });
 $("svg").addEventListener("blur", () => { hoverIdx = null; draw(); });
+// Keyboard access: arrow keys move the same cursor, so the chart is usable without a mouse.
 $("svg").addEventListener("keydown", e => {
   if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
   e.preventDefault();
@@ -454,6 +488,7 @@ $("svg").addEventListener("keydown", e => {
   draw();
 });
 
+/** Table view: the same numbers as the chart in text form (accessibility + easy copy/paste). */
 function renderTable() {
   const box = $("tablebox");
   if (box.hidden) return;

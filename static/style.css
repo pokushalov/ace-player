@@ -1,3 +1,11 @@
+/*
+ * Ace Player styles.
+ *
+ * Colours are defined once as CSS custom properties ("tokens") and used everywhere by role
+ * (--ink, --surface, --down ...). The dark theme only redefines the tokens, so no rule below
+ * needs a dark variant. --down / --up are the chart series colours; they are different hues
+ * AND the chart also labels them directly, so colour is never the only way to tell them apart.
+ */
 :root {
   color-scheme: light;
   --page: #f4f4f1; --surface: #fcfcfb; --surface-2: #f4f4f1; --border: rgba(11, 11, 11, 0.10);
@@ -8,6 +16,7 @@
   --ok: #006300; --err: #b42318; --stop: #d03b3b;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06);
 }
+/* Follows the system appearance. Each value is chosen for the dark surface, not just inverted. */
 @media (prefers-color-scheme: dark) {
   :root {
     color-scheme: dark;
@@ -28,7 +37,7 @@ body {
 }
 main { width: min(860px, 100% - 32px); margin: 0 auto; padding: 40px 0 32px; }
 
-/* header */
+/* header: brand on the left, engine status on the right (wraps on narrow screens) */
 .top { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
 .brand { display: flex; align-items: center; gap: 12px; }
 .brand h1 { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.2; }
@@ -49,7 +58,7 @@ main { width: min(860px, 100% - 32px); margin: 0 auto; padding: 40px 0 32px; }
 }
 label { display: block; margin-bottom: 8px; font-size: 13px; font-weight: 600; color: var(--ink-2); }
 
-/* controls */
+/* controls: shared button/input look; .danger = destructive (Stop), .ghost = secondary, .sm = compact */
 .row { display: flex; gap: 8px; }
 input {
   flex: 1; min-width: 0; padding: 12px 14px; font: inherit; color: var(--ink);
@@ -63,7 +72,7 @@ button {
 }
 button:hover:not(:disabled) { background: var(--accent-hover); }
 button:active:not(:disabled) { transform: scale(0.97); }
-button:disabled { opacity: 0.45; cursor: not-allowed; }
+button:disabled { opacity: 0.45; cursor: not-allowed; }  /* e.g. Stop while nothing plays */
 button.danger { background: var(--stop); }
 button.danger:hover:not(:disabled) { background: #b53030; }
 button.ghost {
@@ -161,8 +170,10 @@ details summary { padding: 14px 20px; cursor: pointer; font-size: 14px; font-wei
 #log .err { color: var(--err); }
 
 footer { margin-top: 24px; text-align: center; font-size: 12px; color: var(--muted); }
+/* The `hidden` attribute must win over any display: rule set on the same element. */
 [hidden] { display: none !important; }
 
+/* Phones / narrow windows: the input takes its own row, tiles shrink. */
 @media (max-width: 560px) {
   .row { flex-wrap: wrap; }
   input { flex-basis: 100%; }

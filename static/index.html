@@ -9,6 +9,7 @@
 </head>
 <body>
 <main>
+  <!-- Brand + engine status (filled by app.js: applyEngine) -->
   <header class="top">
     <div class="brand">
       <svg width="40" height="40" viewBox="0 0 36 36" aria-hidden="true">
@@ -26,12 +27,14 @@
       <button class="ghost sm" id="engine-btn" disabled>&hellip;</button>
     </div>
   </header>
+  <!-- Which Docker image runs the engine, and who made it. Hidden until the server reports it. -->
   <p class="image" id="image" hidden>
     Engine image: <a id="image-link" target="_blank" rel="noopener noreferrer"></a>
     <span id="image-meta"></span>
     &middot; third-party build, not published by AceStream
   </p>
 
+  <!-- Player: paste a link, Play/Stop, status line, and the "now playing" row -->
   <section class="card" aria-label="Player">
     <label for="src">AceStream link, content ID or stream URL</label>
     <div class="row">
@@ -48,6 +51,7 @@
     </div>
   </section>
 
+  <!-- Network throughput: two stat tiles with sparklines, the mirrored chart, and a table alternative -->
   <section class="card" aria-labelledby="nt">
     <div class="head">
       <div>
@@ -78,6 +82,7 @@
     <div id="tablebox" hidden></div>
   </section>
 
+  <!-- Library: history of played streams; pin = keep forever, pencil = give it a name -->
   <section class="card" aria-labelledby="lt">
     <div class="head">
       <div>
@@ -90,6 +95,7 @@
     <p class="empty" id="lib-empty">Streams you play show up here. Pin the ones you want to keep and give them a name.</p>
   </section>
 
+  <!-- Activity log: collapsed by default; useful when something does not start -->
   <details class="card">
     <summary>Activity log</summary>
     <div id="log"></div>

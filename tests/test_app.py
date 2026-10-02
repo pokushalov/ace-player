@@ -1,5 +1,8 @@
 import http.client
 import json
+import os
+import socket
+import subprocess
 import sys
 import tempfile
 import threading
@@ -25,6 +28,8 @@ utun5      1380  <Link#20>                          500     0       9999      50
 
 
 class NormalizeTests(unittest.TestCase):
+    """User input -> stream URL. The security-relevant part: only content IDs and http(s) URLs get through."""
+
     def test_bare_id(self):
         self.assertEqual(app.normalize(ID), (ENGINE_URL, ID))
 
@@ -48,6 +53,9 @@ class NormalizeTests(unittest.TestCase):
 
 
 class NetstatTests(unittest.TestCase):
+    """`netstat -ibn` parsing. The sample text mirrors real macOS output, including a VPN tunnel (utun)
+    and duplicate per-address rows that must not be counted."""
+
     def test_parses_only_physical_link_rows(self):
         self.assertEqual(app.parse_netstat(NETSTAT), {"en0": (13523437139, 633866221), "en5": (0, 0)})
 
@@ -56,17 +64,30 @@ class NetstatTests(unittest.TestCase):
 
 
 class LibraryTests(unittest.TestCase):
+    """History / pin / rename / prune. Each test gets a throwaway data dir so the real library is never touched."""
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
-        self._saved = (app.DATA_DIR, app.HISTORY_FILE, list(app.history))
+        self._saved = (app.DATA_DIR, app.HISTORY_FILE, list(app.history), dict(app.tombstones), app._disk_mtime)
         app.DATA_DIR = Path(self.tmp.name)
         app.HISTORY_FILE = app.DATA_DIR / "history.json"
         app.history[:] = []
+        app.tombstones.clear()
+        app._disk_mtime = 0
 
     def tearDown(self):
         app.DATA_DIR, app.HISTORY_FILE = self._saved[:2]
         app.history[:] = self._saved[2]
+        app.tombstones.clear()
+        app.tombstones.update(self._saved[3])
+        app._disk_mtime = self._saved[4]
         self.tmp.cleanup()
+
+    def other_instance(self, code):
+        """Run `code` in a separate Python process sharing this test's data dir: a second Ace Player."""
+        env = dict(os.environ, ACE_DATA_DIR=self.tmp.name)
+        script = "import app; app.load_library(); " + code
+        subprocess.run([sys.executable, "-c", script], cwd=str(Path(app.__file__).parent), env=env, check=True)
 
     def test_record_and_count(self):
         app.record_play(ID, f"acestream://{ID}")
@@ -114,6 +135,38 @@ class LibraryTests(unittest.TestCase):
         app.update_history("rename", ID, "News")
         self.assertEqual(app.load_history()[0]["name"], "News")
 
+    def test_legacy_list_format_still_loads(self):
+        app.HISTORY_FILE.write_text(json.dumps([{"key": "k", "source": "s", "last_played": 5, "plays": 2}]))
+        entry = app.load_history()[0]
+        self.assertEqual((entry["key"], entry["plays"], entry["updated"]), ("k", 2, 5.0))
+
+    # -- two running instances must not wipe each other's changes ------------------
+
+    def test_stale_instance_does_not_overwrite_the_other(self):
+        app.record_play("m1", "m1")
+        self.other_instance("app.record_play('s1', 's1')")      # the other instance adds s1
+        app.record_play("m2", "m2")                              # we still only knew m1: used to drop s1
+        self.assertEqual({e["key"] for e in app.history}, {"m1", "s1", "m2"})
+        self.assertEqual({e["key"] for e in app.load_history()}, {"m1", "s1", "m2"})
+
+    def test_sync_from_disk_picks_up_other_instance(self):
+        app.record_play("m1", "m1")
+        rev = app.history_rev
+        self.other_instance("app.record_play('s1', 's1'); app.update_history('pin', 's1', True)")
+        app.sync_from_disk()
+        pinned = {e["key"] for e in app.history if e["pinned"]}
+        self.assertEqual(pinned, {"s1"})
+        self.assertGreater(app.history_rev, rev)
+        rev = app.history_rev
+        app.sync_from_disk()                                     # nothing new: must not bump again
+        self.assertEqual(app.history_rev, rev)
+
+    def test_delete_is_not_undone_by_stale_instance(self):
+        app.record_play("k", "k")
+        self.other_instance("app.update_history('delete', 'k')")
+        app.record_play("m2", "m2")                              # our memory still has k
+        self.assertEqual({e["key"] for e in app.history}, {"m2"})
+
     def test_corrupt_file_is_ignored(self):
         app.HISTORY_FILE.write_text("{not json")
         self.assertEqual(app.load_history(), [])
@@ -121,7 +174,95 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual([e["key"] for e in app.load_history()], ["k"])
 
 
+def entry(key, updated, **kw):
+    return {"key": key, "source": key, "name": "", "pinned": False, "last_played": updated,
+            "plays": 1, "updated": updated, **kw}
+
+
+class MergeTests(unittest.TestCase):
+    """merge_library is the pure core of multi-instance safety: no files, no threads."""
+
+    def test_newest_version_wins(self):
+        items, _ = app.merge_library([entry("k", 1, name="old")], {}, [entry("k", 2, name="new")], {})
+        self.assertEqual([e["name"] for e in items], ["new"])
+
+    def test_play_count_takes_the_larger(self):
+        items, _ = app.merge_library([entry("k", 2, plays=3)], {}, [entry("k", 1, plays=7)], {})
+        self.assertEqual(items[0]["plays"], 7)
+
+    def test_union_of_disjoint_entries(self):
+        items, _ = app.merge_library([entry("a", 1)], {}, [entry("b", 1)], {})
+        self.assertEqual({e["key"] for e in items}, {"a", "b"})
+
+    def test_tombstone_beats_older_copy(self):
+        items, dead = app.merge_library([], {"k": 10}, [entry("k", 5)], {}, now=11)  # `now` close to the tombstone
+        self.assertEqual(items, [])
+        self.assertIn("k", dead)
+
+    def test_newer_readd_beats_tombstone(self):
+        items, dead = app.merge_library([entry("k", 20)], {}, [], {"k": 10})
+        self.assertEqual([e["key"] for e in items], ["k"])
+        self.assertNotIn("k", dead)
+
+    def test_old_tombstones_expire(self):
+        _, dead = app.merge_library([], {"k": 1}, [], {}, now=1 + app.TOMBSTONE_TTL + 1)
+        self.assertEqual(dead, {})
+
+    def test_size_cap_keeps_pinned(self):
+        many = [entry(f"k{i}", i + 1) for i in range(app.HISTORY_MAX + 3)]
+        items, _ = app.merge_library(many, {}, [entry("old-pinned", 0.5, pinned=True)], {})
+        keys = {e["key"] for e in items}
+        self.assertIn("old-pinned", keys)
+        self.assertEqual(len(keys), app.HISTORY_MAX + 1)
+
+
+class PortTests(unittest.TestCase):
+    """Startup port selection: keep the preferred port when free, otherwise fall back to another one."""
+
+    def setUp(self):
+        self._saved_port = app.PORT
+
+    def tearDown(self):
+        app.PORT = self._saved_port
+
+    def test_uses_preferred_port_when_free(self):
+        with socket.socket() as s:  # find a free port, then release it
+            s.bind(("127.0.0.1", 0))
+            free = s.getsockname()[1]
+        app.PORT = free
+        server = app.bind_server()
+        try:
+            self.assertEqual(server.server_address[1], free)
+        finally:
+            server.server_close()
+
+    def test_falls_back_when_preferred_port_is_taken(self):
+        with socket.socket() as busy:
+            busy.bind(("127.0.0.1", 0))
+            busy.listen()
+            app.PORT = busy.getsockname()[1]
+            server = app.bind_server()
+            try:
+                self.assertNotEqual(server.server_address[1], app.PORT)
+                self.assertTrue(server.server_address[1] > 0)
+            finally:
+                server.server_close()
+
+    def test_port_in_use_probe(self):
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            s.listen()
+            self.assertTrue(app.port_in_use(s.getsockname()[1]))
+        with socket.socket() as s:
+            s.bind(("127.0.0.1", 0))
+            free = s.getsockname()[1]
+        self.assertFalse(app.port_in_use(free))
+
+
 class HttpTests(unittest.TestCase):
+    """The HTTP layer against a real server on a random port: static files, the state API, and above all
+    the Host/Origin checks that stop other websites from driving VLC or the engine."""
+
     @classmethod
     def setUpClass(cls):
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), app.Handler)
