@@ -1,0 +1,12 @@
+# Optional: run the AceStream engine with Compose instead of letting the app start it.
+# Ace Player starts/stops the same container itself, so this file is only a convenience.
+services:
+  acestream-engine:
+    image: vstavrinov/acestream-engine:latest
+    container_name: acestream-engine
+    # The image is amd64-only; it runs under emulation on Apple Silicon.
+    platform: linux/amd64
+    ports:
+      # Loopback only: the engine has no authentication.
+      - "127.0.0.1:6878:6878"
+    restart: unless-stopped

@@ -1,0 +1,20 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit tests
+        run: python3 -m unittest discover -s tests -v
+      - name: JavaScript syntax
+        run: node --check static/app.js
+      - name: Shell syntax
+        run: |
+          bash -n install.sh
+          bash -n ace_player.sh
+          bash -n web.sh

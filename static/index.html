@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ace Player</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 36 36'%3E%3Crect width='36' height='36' rx='10' fill='%236366f1'/%3E%3Cpath d='M13 11l14 7-14 7z' fill='white'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<main>
+  <header class="top">
+    <div class="brand">
+      <svg width="40" height="40" viewBox="0 0 36 36" aria-hidden="true">
+        <rect width="36" height="36" rx="10" fill="#6366f1"/>
+        <path d="M13 11l14 7-14 7z" fill="#fff"/>
+      </svg>
+      <div>
+        <h1>Ace Player</h1>
+        <p>AceStream &middot; Docker &middot; VLC</p>
+      </div>
+    </div>
+    <div class="engine">
+      <span class="dot" id="dot"></span>
+      <span id="engine-label">Engine: checking&hellip;</span>
+      <button class="ghost sm" id="engine-btn" disabled>&hellip;</button>
+    </div>
+  </header>
+  <p class="image" id="image" hidden>
+    Engine image: <a id="image-link" target="_blank" rel="noopener noreferrer"></a>
+    <span id="image-meta"></span>
+    &middot; third-party build, not published by AceStream
+  </p>
+
+  <section class="card" aria-label="Player">
+    <label for="src">AceStream link, content ID or stream URL</label>
+    <div class="row">
+      <input id="src" autofocus autocomplete="off" spellcheck="false"
+             placeholder="acestream://&hellip;  |  40-character content ID  |  http(s)://&hellip;">
+      <button id="play">&#9654; Play</button>
+      <button id="stop" class="danger" disabled>&#9632; Stop</button>
+    </div>
+    <p class="status" id="status" role="status" aria-live="polite"></p>
+    <div class="now" id="now" hidden>
+      <span class="label" id="now-label">Now playing</span>
+      <code id="now-url"></code>
+      <button class="ghost sm" id="copy">Copy</button>
+    </div>
+  </section>
+
+  <section class="card" aria-labelledby="nt">
+    <div class="head">
+      <div>
+        <h2 id="nt">Network throughput</h2>
+        <small id="iface">Mbit/s &middot; last 5 minutes</small>
+      </div>
+      <button class="ghost sm" id="toggle" aria-pressed="false">Table view</button>
+    </div>
+    <div class="tiles">
+      <div>
+        <div class="tl"><i style="background:var(--down)"></i>Download</div>
+        <div class="tv"><b id="vd">-</b><span>Mbit/s</span></div>
+        <svg class="spark" id="sd" aria-hidden="true"></svg>
+        <div class="ts" id="ad">avg - &middot; peak -</div>
+      </div>
+      <div>
+        <div class="tl"><i style="background:var(--up)"></i>Upload</div>
+        <div class="tv"><b id="vu">-</b><span>Mbit/s</span></div>
+        <svg class="spark" id="su" aria-hidden="true"></svg>
+        <div class="ts" id="au">avg - &middot; peak -</div>
+      </div>
+    </div>
+    <div class="chart" id="chartbox">
+      <svg class="main" id="svg" role="img" tabindex="0"
+           aria-label="Network download and upload in megabits per second, last 5 minutes"></svg>
+      <div id="tip"></div>
+    </div>
+    <div id="tablebox" hidden></div>
+  </section>
+
+  <section class="card" aria-labelledby="lt">
+    <div class="head">
+      <div>
+        <h2 id="lt">Library</h2>
+        <small>&#9733; pinned streams are kept forever; the rest keeps the last 50</small>
+      </div>
+      <button class="ghost sm" id="clear-recent" hidden>Clear recent</button>
+    </div>
+    <ul class="lib" id="lib"></ul>
+    <p class="empty" id="lib-empty">Streams you play show up here. Pin the ones you want to keep and give them a name.</p>
+  </section>
+
+  <details class="card">
+    <summary>Activity log</summary>
+    <div id="log"></div>
+  </details>
+
+  <footer>A local launcher for your own AceStream engine and VLC. Not affiliated with AceStream or VideoLAN.</footer>
+</main>
+<script src="/static/app.js"></script>
+</body>
+</html>
